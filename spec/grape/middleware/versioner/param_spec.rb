@@ -157,4 +157,80 @@ describe Grape::Middleware::Versioner::Param do
       expect(last_response.body).not_to include('API vendor or version not found')
     end
   end
+
+  context 'when there are multiple versions that cascade' do
+    subject { Class.new(Grape::API) }
+
+    let(:middleware) do
+      Class.new do
+        class << self
+          attr_accessor :count
+        end
+
+        def initialize(app)
+          @app = app
+        end
+
+        def call(env)
+          self.class.count += 1
+          @app.call(env)
+        end
+      end
+    end
+
+    before do
+      middleware.count = 0
+    end
+
+    let(:v1_app) do
+      Class.new(Grape::API) do
+        version %w(v1 v2), using: :param
+        content_type :v1_test, 'application/vnd.test.a-cool_resource-v1+json'
+        formatter :v1_test, ->(object, _) { object }
+        format :v1_test
+
+        resources :users do
+          get :hello do
+            'one'
+          end
+        end
+      end
+    end
+
+    let(:v2_app) do
+      Class.new(Grape::API) do
+        version 'v2', using: :param
+        content_type :v2_test, 'application/vnd.test.a-cool_resource-v2+json'
+        formatter :v2_test, ->(object, _) { object }
+        format :v2_test
+
+        resources :users do
+          get :hello do
+            'two'
+          end
+        end
+      end
+    end
+
+    def app
+      subject.use middleware
+      subject.mount v2_app
+      subject.mount v1_app
+      subject
+    end
+
+    it 'responds correctly to a v1 request' do
+      versioned_get '/users/hello', 'v1', using: :param, parameter: :apiver
+      expect(last_response.body).to eq('one')
+      expect(last_response.body).not_to include('API vendor or version not found')
+      expect(middleware.count).to eq(1)
+    end
+
+    it 'responds correctly to a v2 request' do
+      versioned_get '/users/hello', 'v2', using: :param, parameter: :apiver
+      expect(last_response.body).to eq('two')
+      expect(last_response.body).not_to include('API vendor or version not found')
+      expect(middleware.count).to eq(1)
+    end
+  end
 end
